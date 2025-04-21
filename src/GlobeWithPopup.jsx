@@ -1,72 +1,78 @@
 /** @format */
-
-import React, { useRef, useEffect, useState } from "react";
+import React, { useRef, useEffect, useState, useMemo } from "react";
 import Globe from "react-globe.gl";
+import * as THREE from "three";
 import locationData from "./data/data.json";
 
-const GlobeWithMarkers = () => {
+const GlobeWithPinMarkers = () => {
   const globeRef = useRef();
+  const [pinTexture, setPinTexture] = useState(null);
   const [selectedMarker, setSelectedMarker] = useState(null);
-  const [markerElements, setMarkerElements] = useState(new Map());
 
-  const markerSvg = `<svg viewBox="-4 0 36 36">
-    <path fill="currentColor" d="M14,0 C21.732,0 28,5.641 28,12.6 C28,23.963 14,36 14,36 C14,36 0,24.064 0,12.6 C0,5.641 6.268,0 14,0 Z"></path>
-    <circle fill="black" cx="14" cy="14" r="7"></circle>
-  </svg>`;
+  const markerData = useMemo(
+    () =>
+      locationData
+        .filter(
+          (location) =>
+            isFinite(location.lat) &&
+            isFinite(location.long) &&
+            Math.abs(location.lat) <= 90 &&
+            Math.abs(location.long) <= 180
+        )
+        .map((location) => ({
+          id: location.id,
+          lat: location.lat,
+          lng: location.long,
+          city: location.city,
+          images:
+            location.images && location.images.length > 0
+              ? location.images.map(
+                  (img) =>
+                    `https://raw.githubusercontent.com/Xatta-Trone/ait-lab-data-images/main/${img}`
+                )
+              : [`https://picsum.photos/400/200?random=${location.id}`],
+        })),
+    []
+  );
 
-  // Transform only first 100 data points
-  const markerData = locationData.slice(0, 100).map((location) => ({
-    id: location.id,
-    lat: location.lat,
-    lng: location.long,
-    size: 25, // Fixed size for all markers
-    title: location.city,
-    description: `Location in ${location.city}`,
-    image:
-      location.images && location.images.length > 0
-        ? location.images[0]
-        : `https://picsum.photos/400/200?random=${location.id}`,
-  }));
+  console.log(markerData);
 
+  // Convert SVG to canvas texture once
   useEffect(() => {
-    globeRef.current.controls().autoRotate = false; // Changed from true to false
-    globeRef.current.controls().autoRotateSpeed = 0; // Changed from 0.4 to 0
+    const svg = `<svg width="30" height="40" viewBox="-4 0 36 36" xmlns="http://www.w3.org/2000/svg">
+      <path fill="red" d="M14,0 C21.732,0 28,5.641 28,12.6 C28,23.963 14,36 14,36 C14,36 0,24.064 0,12.6 C0,5.641 6.268,0 14,0 Z"/>
+      <circle fill="black" cx="14" cy="14" r="7"/>
+    </svg>`;
+
+    const img = new Image();
+    const canvas = document.createElement("canvas");
+    canvas.width = 40;
+    canvas.height = 50;
+    const ctx = canvas.getContext("2d");
+
+    img.onload = () => {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+      const texture = new THREE.CanvasTexture(canvas);
+      setPinTexture(texture);
+    };
+
+    img.src = "data:image/svg+xml;base64," + btoa(svg);
   }, []);
 
-  const handleMarkerClick = (d) => {
-    const controls = globeRef.current.controls();
-    if (controls.autoRotate) {
-      controls.autoRotate = false;
-      controls.update();
-    }
-
-    // Reset all markers to red
-    markerElements.forEach((el) => {
-      el.style.color = "red";
-    });
-
-    // Set clicked marker to blue
-    const clickedElement = markerElements.get(d.id);
-    if (clickedElement) {
-      clickedElement.style.color = "blue";
-    }
-
-    globeRef.current.pointOfView(
-      { lat: d.lat, lng: d.lng, altitude: 1.5 },
-      1500
-    );
-    setTimeout(() => setSelectedMarker(d), 1600);
-  };
-
-  const handleOverlayClick = (e) => {
-    if (e.target.id === "modal-overlay") {
-      setSelectedMarker(null);
-      // Reset all markers to red when closing popup
-      markerElements.forEach((el) => {
-        el.style.color = "red";
-      });
-    }
-  };
+  // Safe control initialization
+  useEffect(() => {
+    const checkControls = () => {
+      if (globeRef.current && globeRef.current.controls) {
+        const controls = globeRef.current.controls();
+        controls.autoRotate = false;
+        controls.autoRotateSpeed = 0;
+      } else {
+        requestAnimationFrame(checkControls);
+      }
+    };
+    checkControls();
+  }, []);
 
   return (
     <div
@@ -77,62 +83,81 @@ const GlobeWithMarkers = () => {
         background: "#000",
       }}
     >
-      <Globe
-        ref={globeRef}
-        globeImageUrl="//cdn.jsdelivr.net/npm/three-globe/example/img/earth-blue-marble.jpg"
-        htmlElementsData={markerData}
-        htmlElement={(d) => {
-          const el = document.createElement("div");
-          el.innerHTML = markerSvg;
-          el.style.color = "red"; // Default color is red
-          el.style.width = `${d.size}px`;
-          el.style.transition = "all 0.3s ease-in-out";
-          el.style.pointerEvents = "auto";
-          el.style.cursor = "pointer";
-
-          el.onclick = () => handleMarkerClick(d);
-
-          // Store reference to the element
-          setMarkerElements((prev) => new Map(prev).set(d.id, el));
-          return el;
-        }}
-        htmlElementVisibilityModifier={(el, isVisible) => {
-          el.style.opacity = isVisible ? 1 : 0;
-        }}
-      />
+      {pinTexture && (
+        <Globe
+          ref={globeRef}
+          globeImageUrl="//cdn.jsdelivr.net/npm/three-globe/example/img/earth-blue-marble.jpg"
+          backgroundColor="black"
+          showAtmosphere
+          atmosphereAltitude={0.15}
+          objectsData={markerData}
+          objectLat={(d) => d.lat}
+          objectLng={(d) => d.lng}
+          objectAltitude={() => 0.01}
+          objectThreeObject={() => {
+            const spriteMaterial = new THREE.SpriteMaterial({
+              map: pinTexture,
+              depthWrite: false,
+            });
+            const sprite = new THREE.Sprite(spriteMaterial);
+            sprite.scale.set(0.5, 0.7, 1); // size of pin
+            sprite.center.set(0.5, 1); // anchor pin tip to the point
+            return sprite;
+          }}
+          onObjectClick={(d) => {
+            globeRef.current.pointOfView(
+              { lat: d.lat, lng: d.lng, altitude: 1.5 },
+              1000
+            );
+            setTimeout(() => setSelectedMarker(d), 1200);
+          }}
+        />
+      )}
 
       {selectedMarker && (
         <div
           id="modal-overlay"
           style={modalOverlayStyle}
-          onClick={handleOverlayClick}
+          onClick={(e) => {
+            if (e.target.id === "modal-overlay") {
+              setSelectedMarker(null);
+            }
+          }}
         >
           <div style={modalStyle}>
             <button
               style={closeButtonStyle}
-              onClick={() => {
-                setSelectedMarker(null);
-                // Reset all markers to red when closing popup
-                markerElements.forEach((el) => {
-                  el.style.color = "red";
-                });
-              }}
+              onClick={() => setSelectedMarker(null)}
             >
               &times;
             </button>
-            <img
-              src={selectedMarker.image}
-              alt={selectedMarker.title}
-              style={{
-                width: "100%",
-                borderRadius: "8px",
-                marginBottom: "15px",
-              }}
-            />
-            <h2 style={{ marginBottom: "10px" }}>{selectedMarker.title}</h2>
+            <h2 style={{ marginBottom: "10px" }}>{selectedMarker.city}</h2>
             <p style={{ fontSize: "14px", color: "#555" }}>
-              {selectedMarker.description}
+              Location in {selectedMarker.city}
             </p>
+            <div style={imageGridStyle}>
+              {selectedMarker.images.map((img, idx) => {
+                const fileName = img.split("/").pop().split(".")[0]; // remove folder & extension
+
+                return (
+                  <div key={idx} style={{ textAlign: "center" }}>
+                    <img
+                      src={img}
+                      alt={fileName}
+                      style={{
+                        width: "100%",
+                        borderRadius: "8px",
+                        objectFit: "cover",
+                        marginBottom: "5px",
+                      }}
+                    />
+                    <div style={{ fontSize: "12px", color: "#555" }}>
+                      {fileName}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
           </div>
         </div>
       )}
@@ -140,7 +165,7 @@ const GlobeWithMarkers = () => {
   );
 };
 
-// 🌟 Modal Styles
+// 🌟 Modal Styles (unchanged)
 const modalOverlayStyle = {
   position: "fixed",
   top: 0,
@@ -162,7 +187,6 @@ const modalStyle = {
   maxWidth: "400px",
   boxShadow: "0 10px 25px rgba(0, 0, 0, 0.3)",
   position: "relative",
-  animation: "fadeIn 0.3s ease-in-out",
 };
 
 const closeButtonStyle = {
@@ -179,7 +203,13 @@ const closeButtonStyle = {
   color: "#333",
   cursor: "pointer",
   boxShadow: "0 2px 8px rgba(0,0,0,0.2)",
-  transition: "background 0.2s",
 };
 
-export default GlobeWithMarkers;
+const imageGridStyle = {
+  display: "grid",
+  gridTemplateColumns: "1fr 1fr",
+  gap: "10px",
+  marginBottom: "15px",
+};
+
+export default GlobeWithPinMarkers;
